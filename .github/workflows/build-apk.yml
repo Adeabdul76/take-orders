@@ -34,8 +34,24 @@ jobs:
       - name: Run receipt tests
         run: flutter test
 
+      # The app must always be signed with the SAME key, or phones refuse to
+      # install new versions as updates. The key lives in the SIGNING_KEY
+      # secret (Settings > Secrets and variables > Actions), as
+      # "password|base64-of-keystore".
+      - name: Set up signing key
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+        run: |
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "::error::SIGNING_KEY secret is missing. Phones would refuse this build as an update."
+            exit 1
+          fi
+          PASS="${SIGNING_KEY%%|*}"
+          echo "${SIGNING_KEY#*|}" | base64 -d > android/app/release-key.jks
+          printf 'storeFile=release-key.jks\nstorePassword=%s\nkeyAlias=takeorders\nkeyPassword=%s\n' "$PASS" "$PASS" > android/key.properties
+
       - name: Build APK
-        run: flutter build apk --release
+        run: flutter build apk --release --build-number=${{ github.run_number }}
 
       - name: Rename APK
         run: cp build/app/outputs/flutter-apk/app-release.apk TakeOrders.apk
