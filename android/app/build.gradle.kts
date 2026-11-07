@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "my.cafe.take_orders"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 37 // required by permission_handler and flutter_reactive_ble
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
