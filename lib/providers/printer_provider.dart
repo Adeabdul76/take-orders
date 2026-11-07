@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../models/daily_summary.dart';
 import '../models/order.dart';
 import '../models/printer_device.dart';
 import '../services/zywell_printer_service.dart';
@@ -118,6 +119,15 @@ class PrinterProvider extends ChangeNotifier {
     int copies = 1,
   }) async {
     final r = await _service.printReceipt(order, settings, copies: copies);
+    notifyListeners();
+    return r;
+  }
+
+  Future<PrintResult> printDailySummary(
+    DailySummary summary,
+    ReceiptSettings settings,
+  ) async {
+    final r = await _service.printDailySummary(summary, settings);
     notifyListeners();
     return r;
   }

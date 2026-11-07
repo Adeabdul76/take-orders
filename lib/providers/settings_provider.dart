@@ -1,74 +1,123 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/shop_settings.dart';
+import '../services/data_repository.dart';
+import '../services/database_service.dart';
 import '../services/zywell_printer_service.dart' show ReceiptSettings;
 
-/// Shop details and app settings, saved on the phone.
+/// Shop details (shared by all phones of the cafe) + this phone's own
+/// settings (cashier name, paper size, auto-print, copies).
 class SettingsProvider extends ChangeNotifier {
   SharedPreferences? _prefs;
+  DataRepository? _repo;
+  StreamSubscription<ShopSettings?>? _shopSub;
 
+  // Shared shop details
+  ShopSettings shop = const ShopSettings();
+  Uint8List? logoBytes;
+
+  // This phone only
   bool setupDone = false;
-  String shopName = '';
-  String shopPhone = '';
-  String shopAddress = '';
   String cashier = 'Owner';
-  String currency = 'RM'; // "RM" or "MYR"
   int paperMm = 80; // 80 (default) or 58
   bool autoPrint = false;
   int copies = 1; // 1 or 2
-  String footer = 'Thank you! Come again!';
+  int _orderCounter = 0;
+
+  String get shopName => shop.name;
+  String get shopPhone => shop.phone;
+  String get shopAddress => shop.address;
+  String get currency => shop.currency;
+  String get footer => shop.footer;
 
   Future<void> load() async {
     final p = _prefs = await SharedPreferences.getInstance();
     setupDone = p.getBool('setup_done') ?? false;
-    shopName = p.getString('shop_name') ?? '';
-    shopPhone = p.getString('shop_phone') ?? '';
-    shopAddress = p.getString('shop_address') ?? '';
     cashier = p.getString('cashier') ?? 'Owner';
-    currency = p.getString('currency') ?? 'RM';
     paperMm = p.getInt('paper_mm') ?? 80;
     autoPrint = p.getBool('auto_print') ?? false;
     copies = p.getInt('copies') ?? 1;
-    footer = p.getString('footer') ?? 'Thank you! Come again!';
+    final counter = p.getInt('order_counter');
+    // First run after the update: carry on from the old order numbers.
+    _orderCounter = counter ?? await LocalRepository.instance.maxOrderId();
     notifyListeners();
   }
 
+  void attach(DataRepository repo) {
+    if (identical(repo, _repo)) return;
+    _repo = repo;
+    _shopSub?.cancel();
+    _shopSub = repo.watchShop().listen((s) {
+      final newShop = s ?? const ShopSettings();
+      if (newShop.logoPng != shop.logoPng) {
+        logoBytes = _decode(newShop.logoPng);
+      }
+      shop = newShop;
+      notifyListeners();
+    });
+  }
+
+  static Uint8List? _decode(String? b64) {
+    if (b64 == null || b64.isEmpty) return null;
+    try {
+      return base64Decode(b64);
+    } catch (_) {
+      return null;
+    }
+  }
+
   ReceiptSettings get receiptSettings => ReceiptSettings(
-    shopName: shopName,
-    shopPhone: shopPhone,
-    shopAddress: shopAddress,
-    currency: currency,
+    shopName: shop.name,
+    shopPhone: shop.phone,
+    shopAddress: shop.address,
+    currency: shop.currency,
     paperMm: paperMm,
-    footer: footer,
+    footer: shop.footer,
+    logoPng: logoBytes,
   );
 
-  Future<void> saveShop({
-    required String name,
-    required String phone,
-    required String address,
+  /// Next order number for THIS phone, e.g. "042" or (shared cafe) "B042".
+  /// Each phone has its own letter, so two phones never use the same number,
+  /// even when offline.
+  Future<String> nextOrderNumber(String deviceTag) async {
+    _orderCounter++;
+    await (_prefs ?? await SharedPreferences.getInstance()).setInt(
+      'order_counter',
+      _orderCounter,
+    );
+    return '$deviceTag${_orderCounter.toString().padLeft(3, '0')}';
+  }
+
+  /// Order numbers start again from 1 (used when a phone joins a cafe).
+  Future<void> resetOrderCounter() async {
+    _orderCounter = 0;
+    await (_prefs ?? await SharedPreferences.getInstance()).setInt(
+      'order_counter',
+      0,
+    );
+  }
+
+  Future<void> saveShop(ShopSettings newShop) async {
+    if (newShop.logoPng != shop.logoPng) logoBytes = _decode(newShop.logoPng);
+    shop = newShop;
+    notifyListeners();
+    await _repo?.saveShop(newShop);
+  }
+
+  Future<void> saveDevice({
     required String cashierName,
-    required String currencyCode,
     required int paper,
-    required String footerText,
   }) async {
-    shopName = name.trim();
-    shopPhone = phone.trim();
-    shopAddress = address.trim();
     cashier = cashierName.trim().isEmpty ? 'Owner' : cashierName.trim();
-    currency = currencyCode;
     paperMm = paper;
-    footer = footerText.trim().isEmpty
-        ? 'Thank you! Come again!'
-        : footerText.trim();
     setupDone = true;
     final p = _prefs ?? await SharedPreferences.getInstance();
-    await p.setString('shop_name', shopName);
-    await p.setString('shop_phone', shopPhone);
-    await p.setString('shop_address', shopAddress);
     await p.setString('cashier', cashier);
-    await p.setString('currency', currency);
     await p.setInt('paper_mm', paperMm);
-    await p.setString('footer', footer);
     await p.setBool('setup_done', true);
     notifyListeners();
   }
@@ -95,5 +144,11 @@ class SettingsProvider extends ChangeNotifier {
     copies = n;
     notifyListeners();
     await (_prefs ?? await SharedPreferences.getInstance()).setInt('copies', n);
+  }
+
+  @override
+  void dispose() {
+    _shopSub?.cancel();
+    super.dispose();
   }
 }

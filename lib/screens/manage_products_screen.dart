@@ -1,14 +1,12 @@
-import 'dart:io';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
 import '../models/product.dart';
 import '../providers/product_provider.dart';
 import '../providers/settings_provider.dart';
+import '../utils/image_tools.dart';
 import '../utils/money.dart';
 import '../widgets/product_card.dart';
 
@@ -223,7 +221,8 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   late final TextEditingController _name;
   late final TextEditingController _price;
   late final TextEditingController _category;
-  String? _imagePath;
+  String? _imagePath; // old phone-only photo
+  String? _imageData; // shareable photo
   String? _emoji;
   late bool _available;
   bool _saving = false;
@@ -240,6 +239,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     );
     _category = TextEditingController(text: p0?.category ?? '');
     _imagePath = p0?.imagePath;
+    _imageData = p0?.imageData;
     _emoji = p0?.emoji;
     _available = p0?.available ?? true;
   }
@@ -260,14 +260,15 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
         imageQuality: 80,
       );
       if (picked == null) return;
-      final dir = await getApplicationDocumentsDirectory();
-      final dest = p.join(
-        dir.path,
-        'product_${DateTime.now().millisecondsSinceEpoch}${p.extension(picked.path)}',
+      // Small photo saved inside the product, so other phones see it too.
+      final thumb = await compute(
+        makeThumbnailBase64,
+        await picked.readAsBytes(),
       );
-      await File(picked.path).copy(dest);
+      if (thumb == null) throw Exception('not a picture');
       setState(() {
-        _imagePath = dest;
+        _imageData = thumb;
+        _imagePath = null;
         _emoji = null;
       });
     } catch (_) {
@@ -289,15 +290,12 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       name: _name.text.trim(),
       priceCents: parseMoneyToCents(_price.text)!,
       category: _category.text.trim(),
-      imagePath: _imagePath,
-      emoji: _imagePath == null ? _emoji : null,
+      imageData: _imageData,
+      imagePath: _imageData == null ? _imagePath : null,
+      emoji: (_imageData == null && _imagePath == null) ? _emoji : null,
       available: _available,
     );
-    if (_isEdit) {
-      await provider.update(product);
-    } else {
-      await provider.add(product);
-    }
+    await provider.save(product);
     if (mounted) Navigator.of(context).pop();
   }
 
@@ -308,6 +306,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     final preview = Product(
       name: _name.text.isEmpty ? '?' : _name.text,
       priceCents: 0,
+      imageData: _imageData,
       imagePath: _imagePath,
       emoji: _emoji,
     );
@@ -400,11 +399,14 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                       label: const Text('From gallery'),
                     ),
                   ),
-                  if (_imagePath != null || _emoji != null)
+                  if (_imagePath != null ||
+                      _imageData != null ||
+                      _emoji != null)
                     IconButton(
                       tooltip: 'Remove picture',
                       onPressed: () => setState(() {
                         _imagePath = null;
+                        _imageData = null;
                         _emoji = null;
                       }),
                       icon: const Icon(Icons.close),
@@ -424,6 +426,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                       onTap: () => setState(() {
                         _emoji = e;
                         _imagePath = null;
+                        _imageData = null;
                       }),
                       child: Container(
                         width: 48,

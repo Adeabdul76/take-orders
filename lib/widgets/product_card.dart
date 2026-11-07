@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/product.dart';
@@ -11,8 +13,37 @@ class ProductImage extends StatelessWidget {
   final double size;
   const ProductImage({super.key, required this.product, this.size = 56});
 
+  // Decoding base64 on every rebuild is wasteful, so keep recent photos.
+  static final Map<String, Uint8List> _cache = {};
+
+  static Uint8List? _bytes(String data) {
+    final hit = _cache[data];
+    if (hit != null) return hit;
+    try {
+      final b = base64Decode(data);
+      if (_cache.length > 300) _cache.clear();
+      return _cache[data] = b;
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final data = product.imageData;
+    final bytes = data == null ? null : _bytes(data);
+    if (bytes != null) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Image.memory(
+          bytes,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+        ),
+      );
+    }
     final path = product.imagePath;
     if (path != null && File(path).existsSync()) {
       return ClipRRect(

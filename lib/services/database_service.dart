@@ -1,21 +1,29 @@
+import 'dart:async';
+
 import 'package:path/path.dart' as p;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 
 import '../models/order.dart';
 import '../models/order_item.dart';
 import '../models/product.dart';
+import '../models/shop_settings.dart';
+import 'data_repository.dart';
 
-/// All saved data lives on the phone (offline-first). Nothing is sent online.
-class DatabaseService {
-  DatabaseService._();
-  static final DatabaseService instance = DatabaseService._();
+/// "This phone only" storage: SQLite on the phone, works fully offline.
+class LocalRepository implements DataRepository {
+  LocalRepository._();
+  static final LocalRepository instance = LocalRepository._();
 
   Database? _db;
+  final _changes = StreamController<void>.broadcast();
+
+  void _changed() => _changes.add(null);
 
   Future<Database> get db async {
     return _db ??= await openDatabase(
       p.join(await getDatabasesPath(), 'take_orders.db'),
-      version: 1,
+      version: 2,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE products (
@@ -24,12 +32,14 @@ class DatabaseService {
             price_cents INTEGER NOT NULL,
             category TEXT NOT NULL DEFAULT '',
             image_path TEXT,
+            image_data TEXT,
             emoji TEXT,
             available INTEGER NOT NULL DEFAULT 1
           )''');
         await db.execute('''
           CREATE TABLE orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            number TEXT,
             created_at INTEGER NOT NULL,
             subtotal_cents INTEGER NOT NULL,
             total_cents INTEGER NOT NULL,
@@ -49,54 +59,118 @@ class DatabaseService {
             note TEXT NOT NULL DEFAULT ''
           )''');
       },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          // Version 2: shareable product photos + order numbers like "A001".
+          await db.execute('ALTER TABLE products ADD COLUMN image_data TEXT');
+          await db.execute('ALTER TABLE orders ADD COLUMN number TEXT');
+        }
+      },
     );
+  }
+
+  Stream<T> _watch<T>(Future<T> Function() query) async* {
+    yield await query();
+    await for (final _ in _changes.stream) {
+      yield await query();
+    }
   }
 
   // ---------- Products ----------
 
-  Future<List<Product>> getProducts() async {
+  @override
+  Stream<List<Product>> watchProducts() => _watch(getAllProducts);
+
+  @override
+  Future<List<Product>> getAllProducts() async {
     final rows = await (await db).query(
       'products',
       orderBy: 'category COLLATE NOCASE, name COLLATE NOCASE',
     );
-    return rows.map(Product.fromMap).toList();
+    return rows
+        .map(
+          (m) => Product(
+            id: '${m['id']}',
+            name: m['name'] as String,
+            priceCents: m['price_cents'] as int,
+            category: (m['category'] as String?) ?? '',
+            imagePath: m['image_path'] as String?,
+            imageData: m['image_data'] as String?,
+            emoji: m['emoji'] as String?,
+            available: (m['available'] as int? ?? 1) == 1,
+          ),
+        )
+        .toList();
   }
 
-  Future<Product> insertProduct(Product product) async {
-    final map = product.toMap()..remove('id');
-    final id = await (await db).insert('products', map);
-    return product.copyWith(id: id);
+  @override
+  Future<void> saveProduct(Product product) async {
+    final map = {
+      'name': product.name,
+      'price_cents': product.priceCents,
+      'category': product.category,
+      'image_path': product.imagePath,
+      'image_data': product.imageData,
+      'emoji': product.emoji,
+      'available': product.available ? 1 : 0,
+    };
+    final database = await db;
+    if (product.id == null) {
+      await database.insert('products', map);
+    } else {
+      await database.update(
+        'products',
+        map,
+        where: 'id = ?',
+        whereArgs: [int.parse(product.id!)],
+      );
+    }
+    _changed();
   }
 
-  Future<void> updateProduct(Product product) async {
-    await (await db).update(
+  @override
+  Future<void> deleteProduct(String id) async {
+    await (await db).delete(
       'products',
-      product.toMap(),
       where: 'id = ?',
-      whereArgs: [product.id],
+      whereArgs: [int.parse(id)],
     );
-  }
-
-  Future<void> deleteProduct(int id) async {
-    await (await db).delete('products', where: 'id = ?', whereArgs: [id]);
+    _changed();
   }
 
   // ---------- Orders ----------
 
-  /// Saves the order and its item snapshots in one transaction.
-  Future<Order> insertOrder(Order order) async {
+  @override
+  Future<Order> addOrder(Order order) async {
     final database = await db;
     late int orderId;
     await database.transaction((txn) async {
-      orderId = await txn.insert('orders', order.toMap());
+      orderId = await txn.insert('orders', {
+        'number': order.numberText,
+        'created_at': order.createdAt.millisecondsSinceEpoch,
+        'subtotal_cents': order.subtotalCents,
+        'total_cents': order.totalCents,
+        'payment_method': order.paymentMethod,
+        'cash_given_cents': order.cashGivenCents,
+        'change_cents': order.changeCents,
+        'cashier': order.cashier,
+      });
       for (final item in order.items) {
-        await txn.insert('order_items', item.toMap(orderId));
+        await txn.insert('order_items', {
+          'order_id': orderId,
+          'product_id': int.tryParse(item.productId ?? ''),
+          'name': item.name,
+          'unit_price_cents': item.unitPriceCents,
+          'qty': item.qty,
+          'note': item.note,
+        });
       }
     });
-    return order.withId(orderId);
+    _changed();
+    return order.withId('$orderId');
   }
 
-  Future<List<Order>> getOrders({DateTime? from, DateTime? to}) async {
+  Future<List<Order>> _queryOrders({DateTime? from, DateTime? to}) async {
     final database = await db;
     final where = <String>[];
     final args = <Object>[];
@@ -112,7 +186,7 @@ class DatabaseService {
       'orders',
       where: where.isEmpty ? null : where.join(' AND '),
       whereArgs: args.isEmpty ? null : args,
-      orderBy: 'id DESC',
+      orderBy: 'created_at DESC, id DESC',
     );
     final orders = <Order>[];
     for (final row in rows) {
@@ -122,24 +196,87 @@ class DatabaseService {
         whereArgs: [row['id']],
         orderBy: 'id',
       );
-      orders.add(Order.fromMap(row, itemRows.map(OrderItem.fromMap).toList()));
+      final id = row['id'] as int;
+      orders.add(
+        Order(
+          id: '$id',
+          // Orders from before version 2 have no number: use the old "#001".
+          numberText:
+              (row['number'] as String?) ?? id.toString().padLeft(3, '0'),
+          createdAt: DateTime.fromMillisecondsSinceEpoch(
+            row['created_at'] as int,
+          ),
+          items: itemRows
+              .map(
+                (m) => OrderItem(
+                  productId: m['product_id']?.toString(),
+                  name: m['name'] as String,
+                  unitPriceCents: m['unit_price_cents'] as int,
+                  qty: m['qty'] as int,
+                  note: (m['note'] as String?) ?? '',
+                ),
+              )
+              .toList(),
+          subtotalCents: row['subtotal_cents'] as int,
+          totalCents: row['total_cents'] as int,
+          paymentMethod: row['payment_method'] as String,
+          cashGivenCents: row['cash_given_cents'] as int?,
+          changeCents: (row['change_cents'] as int?) ?? 0,
+          cashier: (row['cashier'] as String?) ?? 'Owner',
+        ),
+      );
     }
     return orders;
   }
 
-  /// Total sales (in cents) and order count for today.
-  Future<({int totalCents, int count})> getTodaySales() async {
-    final now = DateTime.now();
-    final start = DateTime(now.year, now.month, now.day);
-    final end = start.add(const Duration(days: 1));
+  @override
+  Stream<List<Order>> watchOrders({required DateTime from, DateTime? to}) =>
+      _watch(() => _queryOrders(from: from, to: to));
+
+  @override
+  Future<List<Order>> getAllOrders() => _queryOrders();
+
+  /// Highest old-style order id, so new order numbers carry on from it.
+  Future<int> maxOrderId() async {
     final rows = await (await db).rawQuery(
-      'SELECT COALESCE(SUM(total_cents), 0) AS total, COUNT(*) AS n '
-      'FROM orders WHERE created_at >= ? AND created_at < ?',
-      [start.millisecondsSinceEpoch, end.millisecondsSinceEpoch],
+      'SELECT COALESCE(MAX(id), 0) AS m FROM orders',
     );
-    return (
-      totalCents: (rows.first['total'] as int?) ?? 0,
-      count: (rows.first['n'] as int?) ?? 0,
+    return (rows.first['m'] as int?) ?? 0;
+  }
+
+  // ---------- Shop details (saved in phone settings) ----------
+
+  @override
+  Stream<ShopSettings?> watchShop() => _watch(getShop);
+
+  @override
+  Future<ShopSettings?> getShop() async {
+    final p = await SharedPreferences.getInstance();
+    final name = p.getString('shop_name');
+    if (name == null) return null;
+    return ShopSettings(
+      name: name,
+      phone: p.getString('shop_phone') ?? '',
+      address: p.getString('shop_address') ?? '',
+      currency: p.getString('currency') ?? 'RM',
+      footer: p.getString('footer') ?? 'Thank you! Come again!',
+      logoPng: p.getString('shop_logo'),
     );
+  }
+
+  @override
+  Future<void> saveShop(ShopSettings s) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString('shop_name', s.name);
+    await p.setString('shop_phone', s.phone);
+    await p.setString('shop_address', s.address);
+    await p.setString('currency', s.currency);
+    await p.setString('footer', s.footer);
+    if (s.logoPng == null) {
+      await p.remove('shop_logo');
+    } else {
+      await p.setString('shop_logo', s.logoPng!);
+    }
+    _changed();
   }
 }

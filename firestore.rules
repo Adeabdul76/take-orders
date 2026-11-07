@@ -1,0 +1,57 @@
+rules_version = '2';
+
+// Security rules for the Take Orders shared cafe.
+// Paste this whole file into Firebase console > Firestore Database > Rules,
+// then click Publish.
+//
+// - A phone can only see a cafe after joining it with the right cafe code + PIN.
+// - Nobody can read the PIN back from the "secret" document.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function cafePath(code) {
+      return /databases/$(database)/documents/cafes/$(code);
+    }
+    function signedIn() {
+      return request.auth != null;
+    }
+    function isMember(code) {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/cafes/$(code)/members/$(request.auth.uid));
+    }
+    function isOwner(code) {
+      return signedIn() && get(cafePath(code)).data.ownerUid == request.auth.uid;
+    }
+
+    match /cafes/{code} {
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow read: if isMember(code);
+      allow update: if isMember(code)
+        && request.resource.data.ownerUid == resource.data.ownerUid;
+      allow delete: if false;
+
+      match /secret/pin {
+        allow create, update: if isOwner(code);
+        allow read, delete: if false;
+      }
+
+      match /members/{uid} {
+        allow create, update: if signedIn() && request.auth.uid == uid && (
+          isOwner(code) ||
+          request.resource.data.pin ==
+            get(/databases/$(database)/documents/cafes/$(code)/secret/pin).data.pin
+        );
+        allow read: if isMember(code);
+        allow delete: if isOwner(code) || (signedIn() && request.auth.uid == uid);
+      }
+
+      match /products/{id} {
+        allow read, write: if isMember(code);
+      }
+
+      match /orders/{id} {
+        allow read, write: if isMember(code);
+      }
+    }
+  }
+}

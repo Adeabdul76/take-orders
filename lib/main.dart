@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'providers/cafe_provider.dart';
 import 'providers/cart_provider.dart';
 import 'providers/order_provider.dart';
 import 'providers/printer_provider.dart';
@@ -8,6 +9,7 @@ import 'providers/product_provider.dart';
 import 'providers/settings_provider.dart';
 import 'screens/home_screen.dart';
 import 'screens/setup_screen.dart';
+import 'services/cloud_service.dart';
 import 'services/database_service.dart';
 import 'services/zywell_printer_service.dart';
 
@@ -16,13 +18,24 @@ const brandPurple = Color(0xFF5B4DBC);
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  final db = DatabaseService.instance;
   final settings = SettingsProvider();
-  final products = ProductProvider(db);
-  final orders = OrderProvider(db);
+  final products = ProductProvider();
+  final orders = OrderProvider();
+  final cart = CartProvider();
+  final cafe = CafeProvider(CloudService.instance, LocalRepository.instance);
   await settings.load();
-  await products.load();
-  await orders.refreshToday();
+  await cafe.init();
+
+  // Point everything at the right data: this phone, or the shared cafe.
+  void attachAll() {
+    settings.attach(cafe.repo);
+    products.attach(cafe.repo);
+    orders.attach(cafe.repo);
+    cart.attach(cafe.repo);
+  }
+
+  attachAll();
+  cafe.addListener(attachAll);
 
   final printer = PrinterProvider(ZywellPrinterService.instance);
   // Try to reconnect to the last ZYWELL in the background.
@@ -31,11 +44,12 @@ Future<void> main() async {
   runApp(
     MultiProvider(
       providers: [
+        ChangeNotifierProvider.value(value: cafe),
         ChangeNotifierProvider.value(value: settings),
         ChangeNotifierProvider.value(value: products),
         ChangeNotifierProvider.value(value: orders),
         ChangeNotifierProvider.value(value: printer),
-        ChangeNotifierProvider(create: (_) => CartProvider(db)),
+        ChangeNotifierProvider.value(value: cart),
       ],
       child: const TakeOrdersApp(),
     ),

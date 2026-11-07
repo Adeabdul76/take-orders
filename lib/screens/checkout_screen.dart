@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/order.dart';
+import '../providers/cafe_provider.dart';
 import '../providers/cart_provider.dart';
-import '../providers/order_provider.dart';
 import '../providers/printer_provider.dart';
 import '../providers/settings_provider.dart';
 import '../utils/money.dart';
@@ -54,13 +54,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     }
     setState(() => _saving = true);
     final settings = context.read<SettingsProvider>();
-    final orders = context.read<OrderProvider>();
+    final deviceTag = context.read<CafeProvider>().deviceTag;
     final order = await cart.checkout(
       paymentMethod: _method,
       cashGivenCents: cashGiven,
       cashier: settings.cashier,
+      numberText: await settings.nextOrderNumber(deviceTag),
     );
-    await orders.refreshToday();
     if (!mounted) return;
     setState(() {
       _saved = order;

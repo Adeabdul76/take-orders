@@ -1,11 +1,17 @@
 /// A product the shop owner created inside the app.
 /// Prices are stored in cents (sen) as whole numbers so money maths is exact.
 class Product {
-  final int? id;
+  final String? id;
   final String name;
   final int priceCents;
   final String category;
-  final String? imagePath; // photo from gallery, copied into app storage
+
+  /// Small JPEG photo as base64 text, so it can be shared with other phones.
+  final String? imageData;
+
+  /// Old versions saved photos as a file on this phone only. Still shown,
+  /// and converted to [imageData] when the cafe is shared.
+  final String? imagePath;
   final String? emoji; // used when there is no photo
   final bool available;
 
@@ -14,50 +20,51 @@ class Product {
     required this.name,
     required this.priceCents,
     this.category = '',
+    this.imageData,
     this.imagePath,
     this.emoji,
     this.available = true,
   });
 
   Product copyWith({
-    int? id,
+    String? id,
     String? name,
     int? priceCents,
     String? category,
-    String? imagePath,
+    String? imageData,
     String? emoji,
     bool? available,
     bool clearImage = false,
-    bool clearEmoji = false,
   }) {
     return Product(
       id: id ?? this.id,
       name: name ?? this.name,
       priceCents: priceCents ?? this.priceCents,
       category: category ?? this.category,
-      imagePath: clearImage ? null : (imagePath ?? this.imagePath),
-      emoji: clearEmoji ? null : (emoji ?? this.emoji),
+      imageData: clearImage ? null : (imageData ?? this.imageData),
+      imagePath: clearImage ? null : imagePath,
+      emoji: emoji ?? this.emoji,
       available: available ?? this.available,
     );
   }
 
-  Map<String, Object?> toMap() => {
-    'id': id,
+  /// Fields shared online (no phone-only file path).
+  Map<String, Object?> toCloud() => {
     'name': name,
-    'price_cents': priceCents,
+    'priceCents': priceCents,
     'category': category,
-    'image_path': imagePath,
+    'imageData': imageData,
     'emoji': emoji,
-    'available': available ? 1 : 0,
+    'available': available,
   };
 
-  factory Product.fromMap(Map<String, Object?> m) => Product(
-    id: m['id'] as int?,
-    name: m['name'] as String,
-    priceCents: m['price_cents'] as int,
+  factory Product.fromCloud(String id, Map<String, dynamic> m) => Product(
+    id: id,
+    name: (m['name'] as String?) ?? '',
+    priceCents: (m['priceCents'] as num?)?.toInt() ?? 0,
     category: (m['category'] as String?) ?? '',
-    imagePath: m['image_path'] as String?,
+    imageData: m['imageData'] as String?,
     emoji: m['emoji'] as String?,
-    available: (m['available'] as int? ?? 1) == 1,
+    available: (m['available'] as bool?) ?? true,
   );
 }

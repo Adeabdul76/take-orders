@@ -12,8 +12,10 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/daily_summary.dart';
 import '../models/order.dart';
 import '../models/printer_device.dart';
+import '../utils/image_tools.dart';
 import '../utils/money.dart';
 
 // ============================================================================
@@ -99,6 +101,10 @@ class ReceiptSettings {
   final int paperMm; // 80 or 58
   final String footer;
 
+  /// Logo picture (PNG). When set, it prints at the top instead of the
+  /// shop name text (the logo usually already shows the name).
+  final Uint8List? logoPng;
+
   const ReceiptSettings({
     required this.shopName,
     this.shopPhone = '',
@@ -106,7 +112,11 @@ class ReceiptSettings {
     this.currency = 'RM',
     this.paperMm = 80,
     this.footer = 'Thank you! Come again!',
+    this.logoPng,
   });
+
+  /// Logo width in printer dots: about 40mm on 80mm paper, 32mm on 58mm.
+  int get logoWidthDots => paperMm == 58 ? 256 : 320;
 }
 
 /// Fixed column widths. 80mm paper = 48 chars, 58mm paper = 32 chars.
@@ -301,6 +311,31 @@ class ReceiptBuilder {
     }
   }
 
+  /// Prints a black-and-white picture, centred, using ESC/POS raster
+  /// command GS v 0. Sent in bands of 64 rows so small printer buffers
+  /// are never overloaded.
+  void image(MonoBitmap m) {
+    if (m.width == 0 || m.height == 0) return;
+    _bytes.addAll(EscPos.alignCenter);
+    final w = m.bytesPerRow;
+    for (var y = 0; y < m.height; y += 64) {
+      final rows = (m.height - y) < 64 ? (m.height - y) : 64;
+      _bytes.addAll([
+        0x1D,
+        0x76,
+        0x30,
+        0x00,
+        w & 0xFF,
+        (w >> 8) & 0xFF,
+        rows & 0xFF,
+        (rows >> 8) & 0xFF,
+      ]);
+      _bytes.addAll(m.data.sublist(y * w, (y + rows) * w));
+    }
+    _bytes.addAll(EscPos.alignLeft);
+    _lines.add('[LOGO ${m.width}x${m.height}]');
+  }
+
   /// Feed paper out, then cut. ZYWELL models with a cutter auto-cut;
   /// models without a cutter simply ignore the cut command.
   List<int> finish() {
@@ -319,11 +354,7 @@ class ReceiptBuilder {
   final b = ReceiptBuilder(s.paperMm);
   String money(int cents) => formatMoney(cents, s.currency);
 
-  // Header
-  b.center(s.shopName.isEmpty ? 'My Cafe' : s.shopName, bold: true, big: true);
-  if (s.shopPhone.trim().isNotEmpty) b.center(s.shopPhone);
-  if (s.shopAddress.trim().isNotEmpty) b.center(s.shopAddress);
-  b.blank();
+  _header(b, s);
 
   // Order info
   b.left('Date: ${DateFormat('dd MMM yyyy hh:mm a').format(order.createdAt)}');
@@ -355,9 +386,115 @@ class ReceiptBuilder {
   return (bytes: b.finish(), lines: b.lines);
 }
 
+/// Logo (or shop name) + phone + address. Shared by all receipts.
+void _header(ReceiptBuilder b, ReceiptSettings s) {
+  final logo = s.logoPng == null ? null : _logoFor(s.logoPng!, s.logoWidthDots);
+  if (logo != null && logo.height > 0) {
+    b.image(logo);
+  } else {
+    b.center(
+      s.shopName.isEmpty ? 'My Cafe' : s.shopName,
+      bold: true,
+      big: true,
+    );
+  }
+  if (s.shopPhone.trim().isNotEmpty) b.center(s.shopPhone);
+  if (s.shopAddress.trim().isNotEmpty) b.center(s.shopAddress);
+  b.blank();
+}
+
+// Converting the logo takes a moment, so remember the last result.
+Uint8List? _cachedLogoSource;
+int _cachedLogoWidth = 0;
+MonoBitmap? _cachedLogo;
+
+MonoBitmap? _logoFor(Uint8List png, int widthDots) {
+  if (identical(png, _cachedLogoSource) && widthDots == _cachedLogoWidth) {
+    return _cachedLogo;
+  }
+  try {
+    _cachedLogo = logoToMono(png, widthDots, threshold: 180);
+  } catch (_) {
+    _cachedLogo = null;
+  }
+  _cachedLogoSource = png;
+  _cachedLogoWidth = widthDots;
+  return _cachedLogo;
+}
+
+/// Black-and-white preview of how the logo will print (for the settings screen).
+Uint8List? logoPrintPreview(Uint8List png, int paperMm) {
+  final m = _logoFor(png, paperMm == 58 ? 256 : 320);
+  return m == null || m.height == 0 ? null : monoToPng(m);
+}
+
+/// Builds the end-of-day summary receipt.
+({List<int> bytes, List<String> lines}) buildDailySummaryReceipt(
+  DailySummary d,
+  ReceiptSettings s,
+) {
+  final b = ReceiptBuilder(s.paperMm);
+  String money(int cents) => formatMoney(cents, s.currency);
+  final time = DateFormat('hh:mm a');
+
+  _header(b, s);
+  b.center('DAILY SUMMARY', bold: true);
+  b.center(DateFormat('EEE, dd MMM yyyy').format(d.day));
+  b.blank();
+  b.left(
+    'Printed: ${DateFormat('dd MMM yyyy hh:mm a').format(DateTime.now())}',
+  );
+  if (d.firstOrder != null) {
+    b.left(
+      'First order ${time.format(d.firstOrder!)}, '
+      'last ${time.format(d.lastOrder!)}',
+    );
+  }
+  b.blank();
+
+  b.labelValue('Orders', '${d.orderCount}');
+  b.labelValue('TOTAL SALES', money(d.totalCents), bold: true);
+  b.labelValue('Average per order', money(d.averageCents));
+  b.blank();
+
+  if (d.byPayment.isNotEmpty) {
+    b.left('By payment');
+    b.divider();
+    for (final p in d.byPayment) {
+      b.labelValue('${p.label} (${p.count})', money(p.cents));
+    }
+    b.blank();
+  }
+
+  if (d.items.isNotEmpty) {
+    b.left('Items sold');
+    b.itemHeader();
+    b.divider();
+    for (final i in d.items) {
+      b.item(i.label, i.count, money(i.cents));
+    }
+    b.divider();
+    b.blank();
+  }
+
+  if (d.byCashier.length > 1) {
+    b.left('By cashier');
+    b.divider();
+    for (final c in d.byCashier) {
+      b.labelValue('${c.label} (${c.count})', money(c.cents));
+    }
+    b.blank();
+  }
+
+  b.center('-- End of summary --');
+  return (bytes: b.finish(), lines: b.lines);
+}
+
 /// Builds the test receipt.
 ({List<int> bytes, List<String> lines}) buildTestReceipt(ReceiptSettings s) {
   final b = ReceiptBuilder(s.paperMm);
+  final logo = s.logoPng == null ? null : _logoFor(s.logoPng!, s.logoWidthDots);
+  if (logo != null) b.image(logo);
   b.center('ZYWELL TEST - SUCCESS', bold: true);
   b.blank();
   b.left('Date: ${DateFormat('dd MMM yyyy hh:mm a').format(DateTime.now())}');
@@ -737,6 +874,14 @@ class ZywellPrinterService {
   }
 
   /// Prints "ZYWELL TEST - SUCCESS" + date + paper size.
+  /// Prints the end-of-day summary.
+  Future<PrintResult> printDailySummary(
+    DailySummary summary,
+    ReceiptSettings settings,
+  ) {
+    return _send(buildDailySummaryReceipt(summary, settings).bytes);
+  }
+
   Future<PrintResult> printTestReceipt(ReceiptSettings settings) {
     return _send(buildTestReceipt(settings).bytes);
   }

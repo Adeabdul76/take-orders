@@ -1,7 +1,11 @@
 import 'order_item.dart';
 
 class Order {
-  final int? id;
+  final String? id;
+
+  /// Order number without "#", e.g. "001" (this phone only) or "A001"
+  /// (shared cafe: A = first phone, B = second phone, ...).
+  final String numberText;
   final DateTime createdAt;
   final List<OrderItem> items;
   final int subtotalCents;
@@ -13,6 +17,7 @@ class Order {
 
   const Order({
     this.id,
+    required this.numberText,
     required this.createdAt,
     required this.items,
     required this.subtotalCents,
@@ -23,13 +28,14 @@ class Order {
     this.cashier = 'Owner',
   });
 
-  /// "#001", "#002" ... shown on screen and on the receipt.
-  String get number => '#${(id ?? 0).toString().padLeft(3, '0')}';
+  /// "#001", "#A001" ... shown on screen and on the receipt.
+  String get number => '#$numberText';
 
   int get itemCount => items.fold(0, (sum, i) => sum + i.qty);
 
-  Order withId(int newId) => Order(
+  Order withId(String newId) => Order(
     id: newId,
+    numberText: numberText,
     createdAt: createdAt,
     items: items,
     subtotalCents: subtotalCents,
@@ -40,25 +46,33 @@ class Order {
     cashier: cashier,
   );
 
-  Map<String, Object?> toMap() => {
-    'created_at': createdAt.millisecondsSinceEpoch,
-    'subtotal_cents': subtotalCents,
-    'total_cents': totalCents,
-    'payment_method': paymentMethod,
-    'cash_given_cents': cashGivenCents,
-    'change_cents': changeCents,
+  /// Shared-online form (items are stored inside the order).
+  Map<String, Object?> toCloud() => {
+    'number': numberText,
+    'createdAt': createdAt.millisecondsSinceEpoch,
+    'items': items.map((i) => i.toCloud()).toList(),
+    'subtotalCents': subtotalCents,
+    'totalCents': totalCents,
+    'paymentMethod': paymentMethod,
+    'cashGivenCents': cashGivenCents,
+    'changeCents': changeCents,
     'cashier': cashier,
   };
 
-  factory Order.fromMap(Map<String, Object?> m, List<OrderItem> items) => Order(
-    id: m['id'] as int?,
-    createdAt: DateTime.fromMillisecondsSinceEpoch(m['created_at'] as int),
-    items: items,
-    subtotalCents: m['subtotal_cents'] as int,
-    totalCents: m['total_cents'] as int,
-    paymentMethod: m['payment_method'] as String,
-    cashGivenCents: m['cash_given_cents'] as int?,
-    changeCents: (m['change_cents'] as int?) ?? 0,
+  factory Order.fromCloud(String id, Map<String, dynamic> m) => Order(
+    id: id,
+    numberText: (m['number'] as String?) ?? '?',
+    createdAt: DateTime.fromMillisecondsSinceEpoch(
+      (m['createdAt'] as num?)?.toInt() ?? 0,
+    ),
+    items: ((m['items'] as List?) ?? const [])
+        .map((e) => OrderItem.fromCloud(Map<String, dynamic>.from(e as Map)))
+        .toList(),
+    subtotalCents: (m['subtotalCents'] as num?)?.toInt() ?? 0,
+    totalCents: (m['totalCents'] as num?)?.toInt() ?? 0,
+    paymentMethod: (m['paymentMethod'] as String?) ?? 'Cash',
+    cashGivenCents: (m['cashGivenCents'] as num?)?.toInt(),
+    changeCents: (m['changeCents'] as num?)?.toInt() ?? 0,
     cashier: (m['cashier'] as String?) ?? 'Owner',
   );
 }

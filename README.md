@@ -7,8 +7,20 @@ It works offline, and everything is saved on the phone.
 - The app starts **empty**. You add your own products, prices, categories and pictures.
 - Tap products to add them to the cart, check out, then print the receipt.
 - Changing a price later does **not** change old orders. Each order keeps a copy of the price it was sold at.
+- **Receipt logo:** pick it in Shop settings. It prints in black and white at the top of every receipt.
+- **Daily summary:** total sales, orders, payment types, best sellers and cashiers, with a **Print summary** button.
+- **Shared cafe (optional):** all phones see the same menu, prices, logo and orders through Firebase. Staff join with a cafe code and PIN. It still works offline. Setup steps are in [FIREBASE_SETUP.md](FIREBASE_SETUP.md).
 
-## How to run it
+## Getting the app onto a phone
+
+You don't need to install anything on a computer. Every change to `main` is
+built automatically by GitHub (`.github/workflows/build-apk.yml`), and the
+newest **TakeOrders.apk** is always on the
+[Releases page](https://github.com/Adeabdul76/take-orders/releases/latest).
+Open that page on the Android phone, download **TakeOrders.apk** and install it.
+Installing a newer version keeps your products and orders.
+
+## How to run it on a computer (developers only)
 
 1. Install Flutter (stable): https://docs.flutter.dev/get-started/install
 2. Connect an Android phone with USB debugging on (or an iPhone with Xcode).
@@ -71,14 +83,20 @@ flutter test
 ```
 lib/
   main.dart                      app start, theme (purple #5B4DBC, 56px buttons)
-  models/                        product, order, order_item, printer_device
-  screens/                       setup, home, cart, checkout, orders, manage products, printer settings
+  firebase_config.dart           Firebase project settings (empty = sharing off)
+  models/                        product, order, order_item, printer_device, shop_settings, daily_summary
+  screens/                       setup, home, cart, checkout, orders, daily summary,
+                                 manage products, printer settings, cafe sharing / join
   widgets/                       product card, cart item, printer banner/icon, print helper
   services/
-    database_service.dart        SQLite, saved on the phone
+    data_repository.dart         one interface for both storage modes
+    database_service.dart        "this phone only" storage (SQLite)
+    cloud_service.dart           "shared cafe" storage (Firebase Firestore) + create/join
     zywell_printer_service.dart  ALL Bluetooth + ESC/POS code (screens never touch Bluetooth)
-  providers/                     cart, product, printer, settings, orders
+  providers/                     cafe (which storage), cart, product, printer, settings, orders
   utils/money.dart               RM formatting (money is stored in sen, so no rounding errors)
+  utils/image_tools.dart         logo -> printer dots, product photo thumbnails
+firestore.rules                  security rules to paste into Firebase
 ```
 
 ## Packages and why
@@ -92,6 +110,8 @@ lib/
 | `provider` | App state | MIT |
 | `image_picker`, `path_provider` | Product photos from the gallery | Apache-2.0 / BSD-3 |
 | `intl` | Date format on receipts | BSD-3 |
+| `firebase_core`, `cloud_firestore`, `firebase_auth` | Shared cafe data, offline copy, anonymous phone sign-in | BSD-3 |
+| `image` | Turns the logo into printer dots; small product photos | MIT |
 
 `flutter_blue_plus` is **not** used, even though the brief names it as the backup option. Its current licence requires a **paid commercial licence** for business use, and a cafe counts as a business. `flutter_reactive_ble` does the same job here for free.
 

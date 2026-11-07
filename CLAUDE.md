@@ -24,21 +24,27 @@
 - Packages: `print_bluetooth_thermal` for ZYWELL Bluetooth Classic (ESC/POS bytes).
 - BLE scan/connect/print: `flutter_reactive_ble` (BSD-3). Do NOT use `flutter_blue_plus`: its licence now requires a paid commercial licence for business use.
 - ESC/POS bytes are built by hand in `zywell_printer_service.dart` (no esc_pos_utils needed).
-- Local DB: SQLite (`sqflite`) - Offline-first. Settings in `shared_preferences`.
+- Storage: `DataRepository` interface with two versions:
+  - this phone only: SQLite (`sqflite`) + `shared_preferences` (database_service.dart)
+  - shared cafe: Firebase Firestore with offline persistence (cloud_service.dart). Phones sign in anonymously and join with cafe code + PIN, enforced by firestore.rules. Firebase settings live in lib/firebase_config.dart (empty = sharing off).
+- Cloud writes are never awaited (they queue offline). Order numbers = device letter + per-phone counter (A001, B001), so they are unique offline.
+- Images: `image` package. Product photos are stored as small base64 JPEG inside the product (shared). Logo is stored as base64 PNG in shop settings and printed with ESC/POS raster GS v 0 in 64-row bands (320 dots wide on 80mm, 256 on 58mm).
 - State: Provider
 - UI: Material Design 3, Purple #5B4DBC, White cards, Big buttons min 56px
 
 ## Folder Structure
 lib/
-  main.dart
-  models/ product.dart, order.dart, order_item.dart, printer_device.dart
-  screens/ setup_screen.dart, home_screen.dart, cart_screen.dart, checkout_screen.dart,
-           orders_screen.dart, manage_products_screen.dart, printer_settings_screen.dart
+  main.dart, firebase_config.dart
+  models/ product.dart, order.dart, order_item.dart, printer_device.dart, shop_settings.dart, daily_summary.dart
+  screens/ setup_screen.dart, home_screen.dart, cart_screen.dart, checkout_screen.dart, orders_screen.dart,
+           daily_summary_screen.dart, manage_products_screen.dart, printer_settings_screen.dart, cafe_sharing_screen.dart
   widgets/ product_card.dart, cart_item_tile.dart, printer_status_banner.dart, print_helper.dart
-  services/ database_service.dart, zywell_printer_service.dart - ALL Bluetooth + ESC/POS code here ONLY
-  providers/ cart_provider.dart, product_provider.dart, printer_provider.dart,
+  services/ data_repository.dart, database_service.dart (local), cloud_service.dart (Firebase),
+            zywell_printer_service.dart - ALL Bluetooth + ESC/POS code here ONLY
+  providers/ cafe_provider.dart, cart_provider.dart, product_provider.dart, printer_provider.dart,
              settings_provider.dart, order_provider.dart
-  utils/ money.dart
+  utils/ money.dart, image_tools.dart
+firestore.rules, FIREBASE_SETUP.md
 
 Rule: NEVER put Bluetooth code in screens.
 
@@ -117,8 +123,13 @@ Change: RM 6.00
 
 (The original brief was cut off at "Mode Check". The text above and the items below were filled in with sensible defaults. Change them if needed.)
 
+## Added features (Nov 2026)
+- Receipt logo: chosen in Shop settings, shared to all phones, printed instead of the shop-name text.
+- Daily summary screen (date picker, total sales, orders, average, by payment, best sellers, by cashier) + Print summary.
+- Shared cafe across phones (Firebase): menu, prices, photos, shop details, logo and orders. Each phone keeps its own cashier name, paper size, auto-print, copies and printer.
+
 ## Filled-in defaults
 - Setup screen: Shop name (required), phone, address, cashier name, RM/MYR, paper size, footer message.
 - Payment methods: Cash, DuitNow QR, Card, E-Wallet. Cash shows Cash Given + Change with quick buttons (Exact, RM 10/20/50/100).
-- Order numbers: #001, #002, ... running number.
+- Order numbers: #001, #002, ... per phone; in a shared cafe #A001, #B001 (letter per phone).
 - Product names print in basic English letters only; other characters print as "?".

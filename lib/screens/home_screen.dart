@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../providers/cafe_provider.dart';
 import '../providers/cart_provider.dart';
 import '../providers/order_provider.dart';
 import '../providers/product_provider.dart';
@@ -12,6 +13,8 @@ import 'cart_screen.dart';
 import 'manage_products_screen.dart';
 import 'orders_screen.dart';
 import 'printer_settings_screen.dart';
+import 'cafe_sharing_screen.dart';
+import 'daily_summary_screen.dart';
 import 'setup_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -34,6 +37,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final cart = context.watch<CartProvider>();
     final orders = context.watch<OrderProvider>();
     final currency = settings.currency;
+    final shared = context.watch<CafeProvider>().isShared;
 
     final categories = products.categories;
     if (_category != null && !categories.contains(_category)) _category = null;
@@ -55,6 +59,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 switch (v) {
                   case 'orders':
                     _open(const OrdersScreen());
+                  case 'summary':
+                    _open(const DailySummaryScreen());
+                  case 'share':
+                    _open(const CafeSharingScreen());
                   case 'products':
                     _open(const ManageProductsScreen());
                   case 'printer':
@@ -69,6 +77,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: ListTile(
                     leading: Icon(Icons.receipt_long),
                     title: Text('Orders'),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'summary',
+                  child: ListTile(
+                    leading: Icon(Icons.summarize),
+                    title: Text('Daily summary'),
                   ),
                 ),
                 PopupMenuItem(
@@ -92,6 +107,13 @@ class _HomeScreenState extends State<HomeScreen> {
                     title: Text('Shop settings'),
                   ),
                 ),
+                PopupMenuItem(
+                  value: 'share',
+                  child: ListTile(
+                    leading: Icon(Icons.devices),
+                    title: Text('Share with other phones'),
+                  ),
+                ),
               ],
             ),
           ],
@@ -101,7 +123,7 @@ class _HomeScreenState extends State<HomeScreen> {
             const PrinterStatusBanner(),
             // Today's sales
             InkWell(
-              onTap: () => _open(const OrdersScreen()),
+              onTap: () => _open(const DailySummaryScreen()),
               child: Container(
                 width: double.infinity,
                 color: Colors.white,
@@ -111,7 +133,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.today),
+                    Icon(
+                      shared ? Icons.cloud_done : Icons.today,
+                      color: shared ? Colors.green : null,
+                    ),
                     const SizedBox(width: 8),
                     const Text("Today's sales", style: TextStyle(fontSize: 16)),
                     const Spacer(),

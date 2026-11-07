@@ -1,12 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../models/product.dart';
-import '../services/database_service.dart';
+import '../services/data_repository.dart';
 
 /// The shop's own products. The app starts EMPTY: nothing is hard-coded.
+/// In a shared cafe, changes made on one phone appear on all phones.
 class ProductProvider extends ChangeNotifier {
-  final DatabaseService _db;
-  ProductProvider(this._db);
+  DataRepository? _repo;
+  StreamSubscription<List<Product>>? _sub;
 
   List<Product> _products = [];
   bool loaded = false;
@@ -21,47 +24,46 @@ class ProductProvider extends ChangeNotifier {
     for (final p in _products) {
       if (p.category.trim().isNotEmpty) set.add(p.category.trim());
     }
-    final list = set.toList()
+    return set.toList()
       ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    return list;
   }
 
-  Future<void> load() async {
-    _products = await _db.getProducts();
-    loaded = true;
-    notifyListeners();
+  void attach(DataRepository repo) {
+    if (identical(repo, _repo)) return;
+    _repo = repo;
+    _sub?.cancel();
+    loaded = false;
+    _sub = repo.watchProducts().listen((list) {
+      _products = list;
+      loaded = true;
+      notifyListeners();
+    });
   }
 
-  Future<void> add(Product p) async {
-    await _db.insertProduct(p);
-    await load();
-  }
-
-  Future<void> update(Product p) async {
-    await _db.updateProduct(p);
-    await load();
-  }
+  Future<void> save(Product p) async => _repo?.saveProduct(p);
 
   Future<void> delete(Product p) async {
-    if (p.id == null) return;
-    await _db.deleteProduct(p.id!);
-    await load();
+    if (p.id != null) await _repo?.deleteProduct(p.id!);
   }
 
-  Future<void> duplicate(Product p) async {
-    await _db.insertProduct(
-      Product(
-        name: '${p.name} (copy)',
-        priceCents: p.priceCents,
-        category: p.category,
-        imagePath: p.imagePath,
-        emoji: p.emoji,
-        available: p.available,
-      ),
-    );
-    await load();
-  }
+  Future<void> duplicate(Product p) => save(
+    Product(
+      name: '${p.name} (copy)',
+      priceCents: p.priceCents,
+      category: p.category,
+      imageData: p.imageData,
+      imagePath: p.imagePath,
+      emoji: p.emoji,
+      available: p.available,
+    ),
+  );
 
   Future<void> setAvailable(Product p, bool available) =>
-      update(p.copyWith(available: available));
+      save(p.copyWith(available: available));
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
 }

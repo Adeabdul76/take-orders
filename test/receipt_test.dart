@@ -5,7 +5,8 @@ import 'package:take_orders/services/zywell_printer_service.dart';
 import 'package:take_orders/utils/money.dart';
 
 Order sampleOrder() => Order(
-  id: 1,
+  id: '1',
+  numberText: '001',
   createdAt: DateTime(2026, 11, 6, 14, 30),
   items: const [
     OrderItem(name: 'Nasi Lemak', unitPriceCents: 800, qty: 1),

@@ -7,6 +7,7 @@ import '../providers/order_provider.dart';
 import '../providers/settings_provider.dart';
 import '../utils/money.dart';
 import '../widgets/print_helper.dart';
+import 'daily_summary_screen.dart';
 
 class OrdersScreen extends StatefulWidget {
   const OrdersScreen({super.key});
@@ -16,15 +17,7 @@ class OrdersScreen extends StatefulWidget {
 }
 
 class _OrdersScreenState extends State<OrdersScreen> {
-  final Set<int> _printing = {};
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => context.read<OrderProvider>().refreshAll(),
-    );
-  }
+  final Set<String> _printing = {};
 
   Future<void> _reprint(Order order) async {
     if (_printing.contains(order.id)) return;
@@ -137,17 +130,33 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Orders')),
+      appBar: AppBar(
+        title: const Text('Orders'),
+        actions: [
+          IconButton(
+            tooltip: 'Daily summary',
+            icon: const Icon(Icons.summarize),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const DailySummaryScreen()),
+            ),
+          ),
+        ],
+      ),
       body: orders.orders.isEmpty
           ? const Center(
               child: Text('No orders yet', style: TextStyle(fontSize: 18)),
             )
-          : RefreshIndicator(
-              onRefresh: orders.refreshAll,
-              child: ListView(
-                padding: const EdgeInsets.only(bottom: 24),
-                children: children,
-              ),
+          : ListView(
+              padding: const EdgeInsets.only(bottom: 24),
+              children: [
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  child: Text(
+                    'Last 30 days. Tap an order to see items or reprint.',
+                  ),
+                ),
+                ...children,
+              ],
             ),
     );
   }

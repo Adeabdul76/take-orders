@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../models/order.dart';
 import '../models/order_item.dart';
 import '../models/product.dart';
-import '../services/database_service.dart';
+import '../services/data_repository.dart';
 
 class CartLine {
   final Product product;
@@ -14,8 +14,10 @@ class CartLine {
 }
 
 class CartProvider extends ChangeNotifier {
-  final DatabaseService _db;
-  CartProvider(this._db);
+  DataRepository? _repo;
+
+  /// Where orders are saved (this phone, or the shared cafe).
+  void attach(DataRepository repo) => _repo = repo;
 
   final List<CartLine> _lines = [];
 
@@ -72,6 +74,7 @@ class CartProvider extends ChangeNotifier {
     required String paymentMethod,
     int? cashGivenCents,
     required String cashier,
+    required String numberText,
   }) async {
     final items = _lines
         .map(
@@ -87,8 +90,9 @@ class CartProvider extends ChangeNotifier {
     final subtotal = totalCents;
     final total = subtotal;
     final change = cashGivenCents == null ? 0 : cashGivenCents - total;
-    final saved = await _db.insertOrder(
+    final saved = await _repo!.addOrder(
       Order(
+        numberText: numberText,
         createdAt: DateTime.now(),
         items: items,
         subtotalCents: subtotal,
