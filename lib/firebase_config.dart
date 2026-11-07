@@ -9,10 +9,10 @@
 // "Share with other phones" option says sharing is not set up yet.
 
 class FirebaseConfig {
-  static const apiKey = '';
-  static const appId = '';
-  static const messagingSenderId = '';
-  static const projectId = '';
+  static const apiKey = 'AIzaSyBN_UJ8ukvYJn0pOeamK9mM9n1NQZWIZY8';
+  static const appId = '1:814490936878:android:c4460c535026c89bc921bf';
+  static const messagingSenderId = '814490936878';
+  static const projectId = 'ishola-cafe';
 
   static bool get isSet =>
       apiKey.isNotEmpty &&
